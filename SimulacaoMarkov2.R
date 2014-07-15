@@ -1,21 +1,37 @@
+#Simulação - Cadeia de Markov e Estimador para a ordem
+#Para fazer esse programa, que simula n passos de uma cadeia de Markov no Espaço de Estados {0,1,2} de ordem k e, 
+#com a cadeia simulada, estima a ordem usando o Critério da Informação de Bayes, 
+#eu utilizei [esse paper](http://arxiv.org/pdf/0910.0264v5.pdf)  
+
+#Em primeiro lugar, faço uso da biblioteca expm para produto de matrizes
+
 library(expm)
 
+#Crio uma função para comparar matrizes de maneira rápida:
 matequal <- function(x, y)
     is.matrix(x) && is.matrix(y) && all(dim(x) == dim(y)) && all(x ==y)
 
 
+#Abaixo, a função para fazer a simulação. Ele recebe uma matriz A, que deve ser 3^k x 3 com os elementos de cada linha 
+#somando 1, e N, que define o número de passos a ser simulados.  
+#Os primeiros k passos são simulados uniformemente. Porém, como em geral N é grande, 
+#esses passos não devem alterar a convergência do algoritmo de estimação da ordem.  
+#O valor retornado será um vetor com N elementos no conjunto {0,1,2}.  
+
 SIMULA <- function(A,N)
 {    
-    k = round(log(nrow(A),3)) 
-    SAIDA <- sample(0:2,k,replace=TRUE)
+    k = round(log(nrow(A),3)) #Determina o valor da ordem pela matriz dada
+    SAIDA <- sample(0:2,k,replace=TRUE) #Sorteia uniformemente os k primeiros valores
     for(i in ((k):(N-1))){
+        # o for abaixo descobre qual linha da matriz a será usada, baseado nos k valores anteriores
         LINHA = 1
         for (l in 0:(k-1))
         {
             LINHA = LINHA + SAIDA[i-l] * (3 ^ (l))
         }
         SOMA <- 0
-        ALE <- runif(1)
+        ALE <- runif(1) #sorteia o valor que será escolhido
+        #o for abaixo descobre em qual dos elementos o valor sorteado cai
         for(j in 1:ncol(A)){        
             SOMA <- SOMA + A[LINHA,j]
             if(ALE <= SOMA){
@@ -27,46 +43,66 @@ SIMULA <- function(A,N)
     return (SAIDA)
 }
 
+#Abaixo o código que estima a ordem de uma simulação de cadeia de Markov. 
+#Recebe como entrada um vetor de qualquer tamanho com os valores {0,1,2} e retorna um inteiro.
+
+#O algoritmo calcula uma função da verossimilhança (que no paper é dada pela equação da linha 254) para cada 
+#possível ordem (que está calibrada entre os valores 1 e 10, mas pode ser alterada), 
+#e escolhe a ordem que minimiza essa função.  
+
 ESTIMA <- function(VET)
 {
     BIC = 1:10 
-    for(n in 1:10){ #Estou considerando ordem no mínimo 1 e no máximo 10
-        RES <- matrix(rep(0,3^n),nrow=3^n,ncol=3)
+    for(n in 1:10){ #Estou considerando ordem no mínimo 1 e no máximo 10. Rodo pra cada n
+        RES <- matrix(rep(0,3^n),nrow=3^n,ncol=3) #será uma matriz 3^n x 3 pensando que a ordem é n
         for(i in n:(length(VET)-1))
         {
+            # o for abaixo descobre qual linha da matriz a será usada, baseado nos k valores anteriores
             LINHA = 1
             for (l in 0:(n-1))
             {
                 LINHA = LINHA + VET[i-l] * (3 ^ (l))
             }
-            RES[LINHA,VET[i+1]+1] = RES[LINHA,VET[i+1]+1] + 1
+            RES[LINHA,VET[i+1]+1] = RES[LINHA,VET[i+1]+1] + 1 #conta quantos elementos cairam naquela posição
         }
-        RES2 = RES / RES %*% rep(1,ncol(RES)) %*% t(rep(1,ncol(RES)))
-        Like = 0
+        RES2 = RES / RES %*% rep(1,ncol(RES)) %*% t(rep(1,ncol(RES))) #Faz a proporção pela linha (soma na linha = 1)
+        Like = 0 # verossimilhança
         for(i in n:(length(VET)-1))
         {
+            # o for abaixo descobre qual linha da matriz a será usada, baseado nos k valores anteriores
             LINHA = 1
             for (l in 0:(n-1))
             {
                 LINHA = LINHA + VET[i-l] * (3 ^ (l))
             }
-            Like = Like + log(RES2[LINHA,VET[i+1]+1])
+            Like = Like + log(RES2[LINHA,VET[i+1]+1]) #calculo na verdade a log da verossimilhança pq o float do R não suporta
         }
-        BIC[n] = -2*Like + (3 ^ (n+1)) * 2 * (3 - 1) * log(n)/2
+        BIC[n] = -2*Like + (3 ^ (n+1)) * 2 * (3 - 1) * log(n)/2 #Bic segundo o paper
     }
     RESP = 1:10
-    return(RESP[BIC==min(BIC)])
+    return(RESP[BIC==min(BIC)])#retorno o n que minimiza o BIC 
 }
 
+#Abaixo eu fiz uma função para rodar a simulação e o estimador para diferentes ordens. 
+#Para gerar a matriz A eu utilizei um gerador aleatório uniforme para cada uma das linhas. Essa função recebe os valores:  
+#k: a ordem da matriz gerada. O objetivo do estimador é acertar esse valor.  
+#N1: o número de passos simulados na cadeia.  
+#N2: o número de corte nos passos.  
+
+#Por exemplo, se eu gerar uma cadeia de ordem 5, com 1000 passos e 20 cortes, terei como resultado um vetor 
+#que mostra qual a estimativa para 1000/20*1 passos, 1000/20*2 passos, até 1000/20*20 passos. 
+#Ou seja, conseguimos assim saber qual seria o número mínimo de passos para termos uma estimação correta.
+
+
 RODAR <- function(k,N1,N2=20){
-    l = runif(3^k*2)
-    A = c(min(l[1],l[2]),max(l[2],l[1])-min(l[1],l[2]),1-max(l[2],l[1]))
-    for (i in 1:(3^k-1)){
+    l = runif(3^k*2) #rodo dois para p1 e p2 já que p1 + p2 + p3 = 1, nao preciso rodar p3
+    A = c(min(l[1],l[2]),max(l[2],l[1])-min(l[1],l[2]),1-max(l[2],l[1])) #primeira linha
+    for (i in 1:(3^k-1)){ #repito para todas as outras linhas
         A = rbind(A,c(min(l[2*i+1],l[2*i+2]),max(l[2*i+2],l[2*i+1])-min(l[2*i+1],l[2*i+2]),1-max(l[2*i+2],l[2*i+1])))
     }
-    B<-SIMULA(A,N1)
+    B<-SIMULA(A,N1) #rodo a simulação apenas uma vez
     
-    PI <- matrix(0,2,nrow=N2)
+    PI <- matrix(0,2,nrow=N2) #matriz que conterá os Ns e a estimativa para as ordens para cada N
     colnames(PI) = c("Passos","Ordem estimada")
     for (i in 1:N2)
     {
@@ -77,49 +113,53 @@ RODAR <- function(k,N1,N2=20){
 }
 
 RODAR(3,1000)
-RODAR(4,10000)
-RODAR(5,10000)
-RODAR(6,100000)
+RODAR(4,2000)
+RODAR(5,5000)
+RODAR(6,20000)
+
+#Abaixo fiz a mesma função com uma pequena alteração para podermos ver um gráfico dos valores para cada um dos cortes.
 
 ESTIMA2 <- function(VET)
 {
     BIC = 1:10 
-    for(n in 1:10){
-        RES <- matrix(rep(0,3^n),nrow=3^n,ncol=3)
+    for(n in 1:10){ #Estou considerando ordem no mínimo 1 e no máximo 10. Rodo pra cada n
+        RES <- matrix(rep(0,3^n),nrow=3^n,ncol=3) #será uma matriz 3^n x 3 pensando que a ordem é n
         for(i in n:(length(VET)-1))
         {
+            # o for abaixo descobre qual linha da matriz a será usada, baseado nos k valores anteriores
             LINHA = 1
             for (l in 0:(n-1))
             {
                 LINHA = LINHA + VET[i-l] * (3 ^ (l))
             }
-            RES[LINHA,VET[i+1]+1] = RES[LINHA,VET[i+1]+1] + 1
+            RES[LINHA,VET[i+1]+1] = RES[LINHA,VET[i+1]+1] + 1 #conta quantos elementos cairam naquela posição
         }
-        RES2 = RES / RES %*% rep(1,ncol(RES)) %*% t(rep(1,ncol(RES)))
-        Like = 0
+        RES2 = RES / RES %*% rep(1,ncol(RES)) %*% t(rep(1,ncol(RES))) #Faz a proporção pela linha (soma na linha = 1)
+        Like = 0 # verossimilhança
         for(i in n:(length(VET)-1))
         {
+            # o for abaixo descobre qual linha da matriz a será usada, baseado nos k valores anteriores
             LINHA = 1
             for (l in 0:(n-1))
             {
                 LINHA = LINHA + VET[i-l] * (3 ^ (l))
             }
-            Like = Like + log(RES2[LINHA,VET[i+1]+1])
+            Like = Like + log(RES2[LINHA,VET[i+1]+1]) #calculo na verdade a log da verossimilhança pq o float do R não suporta
         }
-        BIC[n] = -2*Like + (3 ^ (n+1)) * 2 * (3 - 1) * log(n)/2
+        BIC[n] = -2*Like + (3 ^ (n+1)) * 2 * (3 - 1) * log(n)/2 #Bic segundo o paper
     }
-    return(BIC)
+    return(BIC)#Nesse caso retorno o vetor todo para poder fazer o gráfico
 }
 
 RODAR2 <- function(k,N1,N2=20){
-    l = runif(3^k*2)
-    A = c(min(l[1],l[2]),max(l[2],l[1])-min(l[1],l[2]),1-max(l[2],l[1]))
-    for (i in 1:(3^k-1)){
+    l = runif(3^k*2)#rodo dois para p1 e p2 já que p1 + p2 + p3 = 1, nao preciso rodar p3
+    A = c(min(l[1],l[2]),max(l[2],l[1])-min(l[1],l[2]),1-max(l[2],l[1]))#primeira linha
+    for (i in 1:(3^k-1)){#repito para todas as outras linhas
         A = rbind(A,c(min(l[2*i+1],l[2*i+2]),max(l[2*i+2],l[2*i+1])-min(l[2*i+1],l[2*i+2]),1-max(l[2*i+2],l[2*i+1])))
     }
     B<-SIMULA(A,N1)
     
-    PI <- matrix(0,10,nrow=N2)
+    PI <- matrix(0,10,nrow=N2)#matriz que conterá os Ns e valores dos BICs
     for (i in 1:N2)
     {
         PI[i,1:10] <- ESTIMA2(B[1:(i*N1/N2)])
@@ -127,25 +167,28 @@ RODAR2 <- function(k,N1,N2=20){
     return(PI)
 }
 
+#Abaixo estão os gráficos de como o BIC foi aproximando em cada um dos cortes.
+#A linha em azul, que está mais para cima, é a função do BIC para o vigésimo corte.
+
 A = RODAR2(3,1000)
 for(i in 1:20) {
     plot(type="l",y=A[i,1:5],col=i,axes=ifelse(i==1,T,F),xlab="Ordem",ylab="BIC",main="BIC para N1 = 1000 e k = 3",x=1:5)
     par(new=ifelse(i==20,F,T))
 }
 
-A = RODAR2(4,10000)
+A = RODAR2(4,2000)
 for(i in 1:20) {
     plot(type="l",y=A[i,2:6],col=i,axes=ifelse(i==1,T,F),xlab="Ordem",ylab="BIC",main="BIC para N1 = 10000 e k = 4",x=2:6)
     par(new=ifelse(i==20,F,T))
 }
 
-A = RODAR2(5,10000)
+A = RODAR2(5,5000)
 for(i in 1:20) {
     plot(type="l",y=A[i,3:7],col=i,axes=ifelse(i==1,T,F),xlab="Ordem",ylab="BIC",main="BIC para N1 = 10000 e k = 5",x=3:7)
     par(new=ifelse(i==20,F,T))
 }    
 
-A = RODAR2(6,100000)
+A = RODAR2(6,20000)
 for(i in 1:20) {
     plot(type="l",A[i,4:8],col=i,axes=ifelse(i==1,T,F),xlab="Ordem",ylab="BIC",main="BIC para N1 = 100000 e k = 6",,x=4:8)
     par(new=ifelse(i==20,F,T))
